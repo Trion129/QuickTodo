@@ -52,11 +52,18 @@ class TaskCreationScreen extends StatefulWidget {
 class _TaskCreationScreenState extends State<TaskCreationScreen> {
   final TextEditingController _promptController = TextEditingController();
   List<Task> history = [];
+  Map<String, int> _promptIndexMap = {};
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    _loadHistory();
+    _loadHistory().then((_) {
+      // Set loading to false only after history is loaded
+      setState(() {
+        _isLoading = false;
+      });
+    });
   }
 
   Future<void> _loadHistory() async {
@@ -72,6 +79,12 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                     .map((sub) => Subtask(sub['description'], sub['time']))
                     .toList()))
             .toList();
+
+        // Build lookup map for prompt -> index
+        _promptIndexMap = {};
+        for (int i = 0; i < history.length; i++) {
+          _promptIndexMap[history[i].prompt.trim()] = i;
+        }
       });
     }
   }
@@ -91,6 +104,20 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
   }
 
   Future<void> _generateSubtasks(String prompt) async {
+    final trimmedPrompt = prompt.trim();
+
+    // Use map lookup instead of iteration (O(1) vs O(n))
+    if (_promptIndexMap.containsKey(trimmedPrompt)) {
+      int index = _promptIndexMap[trimmedPrompt]!;
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (context) => SubtaskManagementScreen(task: history[index]),
+        ),
+      );
+      return; // Exit early
+    }
+
     final prefs = await SharedPreferences.getInstance();
     final apiKey = prefs.getString('gemini_api_key');
     final userContext = prefs.getString('user_context') ?? '';
@@ -122,7 +149,10 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
         return;
       }
       setState(() {
-        history.add(Task(prompt, subtasks));
+        Task newTask = Task(prompt, subtasks);
+        history.add(newTask);
+        // Update the index map with the new task
+        _promptIndexMap[prompt.trim()] = history.length - 1;
         _saveHistory();
       });
       Navigator.push(
@@ -141,7 +171,16 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
 
   void _deleteHistoryItem(int index) {
     setState(() {
+      // Remove from index map before removing from history
+      _promptIndexMap.remove(history[index].prompt.trim());
       history.removeAt(index);
+
+      // Rebuild index map with updated indices
+      _promptIndexMap = {};
+      for (int i = 0; i < history.length; i++) {
+        _promptIndexMap[history[i].prompt.trim()] = i;
+      }
+
       _saveHistory();
     });
   }
@@ -161,49 +200,51 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
           ),
         ],
       ),
-      body: Padding(
-        padding: EdgeInsets.all(16.0),
-        child: Column(
-          children: [
-            TextField(
-              controller: _promptController,
-              decoration: InputDecoration(labelText: 'Enter the Task'),
-            ),
-            SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: () => _generateSubtasks(_promptController.text),
-              child: Text('Plan it!'),
-            ),
-            SizedBox(height: 16),
-            Text('History', style: TextStyle(fontSize: 18)),
-            Expanded(
-              child: ListView.builder(
-                itemCount: history.length,
-                itemBuilder: (context, index) {
-                  return ListTile(
-                    trailing: IconButton(
-                      icon: Icon(Icons.delete),
-                      onPressed: () {
-                        setState(() {
-                          _deleteHistoryItem(index);
-                        });
+      body: _isLoading
+          ? Center(child: CircularProgressIndicator())
+          : Padding(
+              padding: EdgeInsets.all(16.0),
+              child: Column(
+                children: [
+                  TextField(
+                    controller: _promptController,
+                    decoration: InputDecoration(labelText: 'Enter the Task'),
+                  ),
+                  SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: () => _generateSubtasks(_promptController.text),
+                    child: Text('Plan it!'),
+                  ),
+                  SizedBox(height: 16),
+                  Text('History', style: TextStyle(fontSize: 18)),
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: history.length,
+                      itemBuilder: (context, index) {
+                        return ListTile(
+                          trailing: IconButton(
+                            icon: Icon(Icons.delete),
+                            onPressed: () {
+                              setState(() {
+                                _deleteHistoryItem(index);
+                              });
+                            },
+                          ),
+                          title: Text(history[index].prompt),
+                          onTap: () => Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  SubtaskManagementScreen(task: history[index]),
+                            ),
+                          ),
+                        );
                       },
                     ),
-                    title: Text(history[index].prompt),
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) =>
-                            SubtaskManagementScreen(task: history[index]),
-                      ),
-                    ),
-                  );
-                },
+                  ),
+                ],
               ),
             ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -219,16 +260,59 @@ class SubtaskManagementScreen extends StatefulWidget {
 
 class _SubtaskManagementScreenState extends State<SubtaskManagementScreen> {
   late List<Subtask> subtasks;
+  int? _historyIndex; // Track position in history
+  bool _hasUnsavedChanges = false; // Track if changes need to be saved
 
   @override
   void initState() {
     super.initState();
     subtasks = widget.task.subtasks;
+    _findTaskInHistory();
+  }
+
+  void _findTaskInHistory() async {
+    final prefs = await SharedPreferences.getInstance();
+    final historyJson = prefs.getString('task_history');
+    if (historyJson != null) {
+      final List<dynamic> historyList = json.decode(historyJson);
+      // Find the matching prompt
+      for (int i = 0; i < historyList.length; i++) {
+        if (historyList[i]['prompt'] == widget.task.prompt) {
+          setState(() {
+            _historyIndex = i;
+          });
+          break;
+        }
+      }
+    }
+  }
+
+  Future<void> _saveChangesToHistory() async {
+    if (_historyIndex == null) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final historyJson = prefs.getString('task_history');
+    if (historyJson != null) {
+      final List<dynamic> historyList = json.decode(historyJson);
+
+      if (_historyIndex! < historyList.length) {
+        // Update the subtasks in history
+        historyList[_historyIndex!]['subtasks'] = subtasks
+            .map((sub) => {'description': sub.description, 'time': sub.time})
+            .toList();
+
+        // Save back to shared preferences
+        await prefs.setString('task_history', json.encode(historyList));
+        // Reset unsaved changes flag
+        _hasUnsavedChanges = false;
+      }
+    }
   }
 
   void _addSubtask() {
     setState(() {
       subtasks.add(Subtask('New Subtask', 10));
+      _hasUnsavedChanges = true;
     });
   }
 
@@ -236,12 +320,14 @@ class _SubtaskManagementScreenState extends State<SubtaskManagementScreen> {
     setState(() {
       subtasks[index].description = description;
       subtasks[index].time = time;
+      _hasUnsavedChanges = true;
     });
   }
 
   void _removeSubtask(int index) {
     setState(() {
       subtasks.removeAt(index);
+      _hasUnsavedChanges = true;
     });
   }
 
@@ -250,24 +336,35 @@ class _SubtaskManagementScreenState extends State<SubtaskManagementScreen> {
       if (newIndex > oldIndex) newIndex -= 1;
       final Subtask item = subtasks.removeAt(oldIndex);
       subtasks.insert(newIndex, item);
+      _hasUnsavedChanges = true;
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('Manage Subtasks'),
-      ),
-      body: CustomScrollView(
-        slivers: [
-          SliverReorderableList(
+    return WillPopScope(
+      onWillPop: () async {
+        if (_hasUnsavedChanges) {
+          await _saveChangesToHistory();
+        }
+        return true;
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text('Manage Subtasks'),
+        ),
+        body: Padding(
+          padding: EdgeInsets.only(
+              bottom: 80), // Add padding at the bottom for FAB clearance
+          child: ReorderableListView.builder(
             onReorder: _rearrangeSubtasks,
             itemCount: subtasks.length,
             itemBuilder: (context, index) {
               final subtask = subtasks[index];
               return ListTile(
-                key: ValueKey(subtask),
+                key: ValueKey(index),
+                contentPadding:
+                    EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 title: Text(subtask.description),
                 subtitle: Text('${subtask.time} min'),
                 trailing: Row(
@@ -286,31 +383,34 @@ class _SubtaskManagementScreenState extends State<SubtaskManagementScreen> {
               );
             },
           ),
-          SliverPadding(
-            padding: EdgeInsets.only(bottom: 100.0), // Extra scrollable space
-          ),
-        ],
-      ),
-      floatingActionButton: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          FloatingActionButton(
-            heroTag: 'add_subtask',
-            onPressed: _addSubtask,
-            child: Icon(Icons.add),
-          ),
-          SizedBox(width: 16),
-          FloatingActionButton(
-            heroTag: 'start_playlist',
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => TimerPlaylistScreen(subtasks: subtasks),
-              ),
+        ),
+        floatingActionButton: Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            FloatingActionButton(
+              heroTag: 'add_subtask',
+              onPressed: _addSubtask,
+              child: Icon(Icons.add),
             ),
-            child: Icon(Icons.play_arrow),
-          ),
-        ],
+            SizedBox(width: 16),
+            FloatingActionButton(
+              heroTag: 'start_playlist',
+              onPressed: () async {
+                if (_hasUnsavedChanges) {
+                  await _saveChangesToHistory();
+                }
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) =>
+                        TimerPlaylistScreen(subtasks: subtasks),
+                  ),
+                );
+              },
+              child: Icon(Icons.play_arrow),
+            ),
+          ],
+        ),
       ),
     );
   }
