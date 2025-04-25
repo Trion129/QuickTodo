@@ -258,46 +258,59 @@ class _SubtaskManagementScreenState extends State<SubtaskManagementScreen> {
     return Scaffold(
       appBar: AppBar(
         title: Text('Manage Subtasks'),
-        actions: [
-          IconButton(
-            icon: Icon(Icons.play_arrow),
+      ),
+      body: CustomScrollView(
+        slivers: [
+          SliverReorderableList(
+            onReorder: _rearrangeSubtasks,
+            itemCount: subtasks.length,
+            itemBuilder: (context, index) {
+              final subtask = subtasks[index];
+              return ListTile(
+                key: ValueKey(subtask),
+                title: Text(subtask.description),
+                subtitle: Text('${subtask.time} min'),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: Icon(Icons.edit),
+                      onPressed: () => _showEditDialog(index),
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.delete),
+                      onPressed: () => _removeSubtask(index),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+          SliverPadding(
+            padding: EdgeInsets.only(bottom: 100.0), // Extra scrollable space
+          ),
+        ],
+      ),
+      floatingActionButton: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          FloatingActionButton(
+            heroTag: 'add_subtask',
+            onPressed: _addSubtask,
+            child: Icon(Icons.add),
+          ),
+          SizedBox(width: 16),
+          FloatingActionButton(
+            heroTag: 'start_playlist',
             onPressed: () => Navigator.push(
               context,
               MaterialPageRoute(
                 builder: (context) => TimerPlaylistScreen(subtasks: subtasks),
               ),
             ),
+            child: Icon(Icons.play_arrow),
           ),
         ],
-      ),
-      body: ReorderableListView(
-        onReorder: _rearrangeSubtasks,
-        children: subtasks.asMap().entries.map((entry) {
-          int index = entry.key;
-          Subtask subtask = entry.value;
-          return ListTile(
-            key: ValueKey(subtask),
-            title: Text(subtask.description),
-            subtitle: Text('${subtask.time} min'),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  icon: Icon(Icons.edit),
-                  onPressed: () => _showEditDialog(index),
-                ),
-                IconButton(
-                  icon: Icon(Icons.delete),
-                  onPressed: () => _removeSubtask(index),
-                ),
-              ],
-            ),
-          );
-        }).toList(),
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _addSubtask,
-        child: Icon(Icons.add),
       ),
     );
   }
