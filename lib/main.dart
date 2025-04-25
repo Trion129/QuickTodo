@@ -59,7 +59,6 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
   void initState() {
     super.initState();
     _loadHistory().then((_) {
-      // Set loading to false only after history is loaded
       setState(() {
         _isLoading = false;
       });
@@ -80,7 +79,6 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                     .toList()))
             .toList();
 
-        // Build lookup map for prompt -> index
         _promptIndexMap = {};
         for (int i = 0; i < history.length; i++) {
           _promptIndexMap[history[i].prompt.trim()] = i;
@@ -106,7 +104,6 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
   Future<void> _generateSubtasks(String prompt) async {
     final trimmedPrompt = prompt.trim();
 
-    // Use map lookup instead of iteration (O(1) vs O(n))
     if (_promptIndexMap.containsKey(trimmedPrompt)) {
       int index = _promptIndexMap[trimmedPrompt]!;
       Navigator.push(
@@ -115,7 +112,7 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
           builder: (context) => SubtaskManagementScreen(task: history[index]),
         ),
       );
-      return; // Exit early
+      return;
     }
 
     final prefs = await SharedPreferences.getInstance();
@@ -151,7 +148,6 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       setState(() {
         Task newTask = Task(prompt, subtasks);
         history.add(newTask);
-        // Update the index map with the new task
         _promptIndexMap[prompt.trim()] = history.length - 1;
         _saveHistory();
       });
@@ -171,11 +167,9 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
 
   void _deleteHistoryItem(int index) {
     setState(() {
-      // Remove from index map before removing from history
       _promptIndexMap.remove(history[index].prompt.trim());
       history.removeAt(index);
 
-      // Rebuild index map with updated indices
       _promptIndexMap = {};
       for (int i = 0; i < history.length; i++) {
         _promptIndexMap[history[i].prompt.trim()] = i;
@@ -260,8 +254,8 @@ class SubtaskManagementScreen extends StatefulWidget {
 
 class _SubtaskManagementScreenState extends State<SubtaskManagementScreen> {
   late List<Subtask> subtasks;
-  int? _historyIndex; // Track position in history
-  bool _hasUnsavedChanges = false; // Track if changes need to be saved
+  int? _historyIndex;
+  bool _hasUnsavedChanges = false;
 
   @override
   void initState() {
@@ -275,7 +269,6 @@ class _SubtaskManagementScreenState extends State<SubtaskManagementScreen> {
     final historyJson = prefs.getString('task_history');
     if (historyJson != null) {
       final List<dynamic> historyList = json.decode(historyJson);
-      // Find the matching prompt
       for (int i = 0; i < historyList.length; i++) {
         if (historyList[i]['prompt'] == widget.task.prompt) {
           setState(() {
@@ -296,14 +289,11 @@ class _SubtaskManagementScreenState extends State<SubtaskManagementScreen> {
       final List<dynamic> historyList = json.decode(historyJson);
 
       if (_historyIndex! < historyList.length) {
-        // Update the subtasks in history
         historyList[_historyIndex!]['subtasks'] = subtasks
             .map((sub) => {'description': sub.description, 'time': sub.time})
             .toList();
 
-        // Save back to shared preferences
         await prefs.setString('task_history', json.encode(historyList));
-        // Reset unsaved changes flag
         _hasUnsavedChanges = false;
       }
     }
@@ -354,8 +344,7 @@ class _SubtaskManagementScreenState extends State<SubtaskManagementScreen> {
           title: Text('Manage Subtasks'),
         ),
         body: Padding(
-          padding: EdgeInsets.only(
-              bottom: 80), // Add padding at the bottom for FAB clearance
+          padding: EdgeInsets.only(bottom: 80),
           child: ReorderableListView.builder(
             onReorder: _rearrangeSubtasks,
             itemCount: subtasks.length,
@@ -613,6 +602,9 @@ class _TimerPlaylistScreenState extends State<TimerPlaylistScreen> {
             Text(
               currentSubtask.description,
               style: TextStyle(color: Colors.white, fontSize: 20),
+              textAlign: TextAlign.center,
+              maxLines: 3,
+              overflow: TextOverflow.ellipsis,
             ),
             SizedBox(height: 20),
             Text(
@@ -772,9 +764,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   labelText: 'User Context (e.g., preferences, constraints)'),
               maxLines: 3,
             ),
-            SizedBox(height: 16), // Add this SizedBox
+            SizedBox(height: 16),
             SwitchListTile(
-              // Add this SwitchListTile
               title: Text('Keep Screen On During Timer'),
               value: _keepScreenOn,
               onChanged: (value) {
