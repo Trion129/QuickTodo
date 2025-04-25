@@ -1,16 +1,14 @@
-# todo_automation_app
+# Quick Todo
 
-A new Flutter project.
+I like todo lists to get things done but I am lazy and I couldn't find any app or tool that covered all of following, so made this.
+1. Minimal True-black AMOLED-friendly display.
+2. AI based task splitting, where I can use free Gemini tier.
+3. Ability to keep always on.
 
 ## Getting Started
 
-This project is a starting point for a Flutter application.
+Download the latest apk from release.
 
-A few resources to get you started if this is your first Flutter project:
+## Future
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+If you have any new idea for the feature, feel free to open issue and I'll try to add it.
