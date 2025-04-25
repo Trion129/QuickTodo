@@ -10,6 +10,8 @@ import 'package:sound_mode/sound_mode.dart';
 import 'package:vibration/vibration.dart';
 import 'dart:convert';
 
+import 'package:wakelock_plus/wakelock_plus.dart';
+
 void main() {
   runApp(TodoAutomationApp());
 }
@@ -63,14 +65,28 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
     if (historyJson != null) {
       final List<dynamic> historyList = json.decode(historyJson);
       setState(() {
-        history = historyList.map((item) => Task(item['prompt'], (item['subtasks'] as List).map((sub) => Subtask(sub['description'], sub['time'])).toList())).toList();
+        history = historyList
+            .map((item) => Task(
+                item['prompt'],
+                (item['subtasks'] as List)
+                    .map((sub) => Subtask(sub['description'], sub['time']))
+                    .toList()))
+            .toList();
       });
     }
   }
 
   Future<void> _saveHistory() async {
     final prefs = await SharedPreferences.getInstance();
-    final historyJson = json.encode(history.map((task) => {'prompt': task.prompt, 'subtasks': task.subtasks.map((sub) => {'description': sub.description, 'time': sub.time}).toList()}).toList());
+    final historyJson = json.encode(history
+        .map((task) => {
+              'prompt': task.prompt,
+              'subtasks': task.subtasks
+                  .map((sub) =>
+                      {'description': sub.description, 'time': sub.time})
+                  .toList()
+            })
+        .toList());
     await prefs.setString('task_history', historyJson);
   }
 
@@ -84,20 +100,20 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       );
       return;
     }
-    final model = GenerativeModel(model: 'gemini-2.0-flash-lite', apiKey: apiKey);
-    final fullPrompt = 'User context: $userContext\n\nBreak down the task "$prompt" into subtasks with time estimates in minutes(integer). This will be parsed. Do not add anything at end of line. Add a relevant android supported emoji. Format as: "Subtask: [emoji][description] - Time: [minutes (integer)] min"';
+    final model =
+        GenerativeModel(model: 'gemini-2.0-flash-lite', apiKey: apiKey);
+    final fullPrompt =
+        'User context: $userContext\n\nBreak down the task "$prompt" into subtasks with time estimates in minutes(integer). This will be parsed. Do not add anything at end of line. Add a relevant android supported emoji. Format as: "Subtask: [emoji][description] - Time: [minutes (integer)] min"';
     try {
       final response = await model.generateContent([Content.text(fullPrompt)]);
       final lines = response.text?.split('\n');
-      final subtasks = lines
-          ?.where((line) => line.contains('Subtask:'))
-          .map((line) {
+      final subtasks =
+          lines?.where((line) => line.contains('Subtask:')).map((line) {
         final parts = line.split(' - Time: ');
         final description = parts[0].replaceFirst('Subtask: ', '').trim();
         final time = int.parse(parts[1].replaceAll(' min', '').trim());
         return Subtask(description, time);
-      })
-          .toList();
+      }).toList();
 
       if (subtasks == null || subtasks.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -112,7 +128,8 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => SubtaskManagementScreen(task: Task(prompt, subtasks)),
+          builder: (context) =>
+              SubtaskManagementScreen(task: Task(prompt, subtasks)),
         ),
       );
     } catch (e) {
@@ -176,7 +193,8 @@ class _TaskCreationScreenState extends State<TaskCreationScreen> {
                     onTap: () => Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (context) => SubtaskManagementScreen(task: history[index]),
+                        builder: (context) =>
+                            SubtaskManagementScreen(task: history[index]),
                       ),
                     ),
                   );
@@ -195,7 +213,8 @@ class SubtaskManagementScreen extends StatefulWidget {
   const SubtaskManagementScreen({super.key, required this.task});
 
   @override
-  _SubtaskManagementScreenState createState() => _SubtaskManagementScreenState();
+  _SubtaskManagementScreenState createState() =>
+      _SubtaskManagementScreenState();
 }
 
 class _SubtaskManagementScreenState extends State<SubtaskManagementScreen> {
@@ -285,7 +304,8 @@ class _SubtaskManagementScreenState extends State<SubtaskManagementScreen> {
 
   void _showEditDialog(int index) {
     final controller = TextEditingController(text: subtasks[index].description);
-    final timeController = TextEditingController(text: subtasks[index].time.toString());
+    final timeController =
+        TextEditingController(text: subtasks[index].time.toString());
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -311,7 +331,8 @@ class _SubtaskManagementScreenState extends State<SubtaskManagementScreen> {
           ),
           TextButton(
             onPressed: () {
-              _editSubtask(index, controller.text, int.parse(timeController.text));
+              _editSubtask(
+                  index, controller.text, int.parse(timeController.text));
               Navigator.pop(context);
             },
             child: Text('Save'),
@@ -332,41 +353,92 @@ class TimerPlaylistScreen extends StatefulWidget {
 
 class _TimerPlaylistScreenState extends State<TimerPlaylistScreen> {
   int currentIndex = 0;
-  late int remainingTime; // in seconds
+  late int _totalDurationSeconds;
+  int _elapsedSecondsBeforePause = 0;
+  DateTime? _startTime;
   bool isPaused = false;
   Timer? _timer;
+  bool _keepScreenOn = false;
+  bool hasTriggered = false;
 
   @override
   void initState() {
     super.initState();
+    _loadSettings();
     if (widget.subtasks.isNotEmpty) {
-      remainingTime = widget.subtasks[currentIndex].time * 60 + 1;
+      _initializeTimerForCurrentSubtask();
       _startTimer();
     }
+  }
+
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    _keepScreenOn = prefs.getBool('keep_screen_on') ?? false;
+    if (_keepScreenOn) {
+      WakelockPlus.enable();
+    } else {
+      WakelockPlus.disable();
+    }
+  }
+
+  void _applyScreenWakeLock() async {
+    if (_keepScreenOn) {
+      WakelockPlus.enable();
+    } else {
+      WakelockPlus.disable();
+    }
+  }
+
+  void _initializeTimerForCurrentSubtask() {
+    _totalDurationSeconds = widget.subtasks[currentIndex].time * 60;
+    _elapsedSecondsBeforePause = 0;
+    _startTime = DateTime.now();
+    hasTriggered = false;
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    WakelockPlus.disable();
     super.dispose();
   }
 
   void _startTimer() {
     _timer?.cancel();
+    _applyScreenWakeLock();
     if (!isPaused) {
-      _timer = Timer.periodic(Duration(seconds: 1), (timer) async {
+      _startTime ??= DateTime.now();
+      _timer = Timer.periodic(Duration(milliseconds: 200), (timer) async {
         if (mounted) {
           if (!isPaused) {
-            setState(() {
-              remainingTime--;
-              if (remainingTime == 0) {
-                _playNotificationSound();
-                _triggerVibration();
-              }
-            });
+            final currentRemainingTime = _calculateRemainingTime();
+            if (currentRemainingTime <= 0 && !hasTriggered) {
+              _playNotificationSound();
+              _triggerVibration();
+              hasTriggered = true;
+            }
+            setState(() {});
+          } else {
+            timer.cancel();
           }
+        } else {
+          timer.cancel();
         }
       });
+    }
+  }
+
+  int _calculateRemainingTime() {
+    if (_startTime != null) {
+      // Timer is running
+      final elapsedSinceStart =
+          DateTime.now().difference(_startTime!).inSeconds;
+      final totalElapsedSeconds =
+          _elapsedSecondsBeforePause + elapsedSinceStart;
+      return _totalDurationSeconds - totalElapsedSeconds;
+    } else {
+      // Timer is paused
+      return _totalDurationSeconds - _elapsedSecondsBeforePause;
     }
   }
 
@@ -382,8 +454,9 @@ class _TimerPlaylistScreenState extends State<TimerPlaylistScreen> {
   }
 
   void _triggerVibration() async {
-    if (await SoundMode.ringerModeStatus != RingerModeStatus.silent && await Vibration.hasVibrator()) {
-      Vibration.vibrate(duration: 500); // 500ms
+    if (await SoundMode.ringerModeStatus != RingerModeStatus.silent &&
+        await Vibration.hasVibrator()) {
+      Vibration.vibrate(duration: 500);
     }
   }
 
@@ -391,7 +464,7 @@ class _TimerPlaylistScreenState extends State<TimerPlaylistScreen> {
     if (currentIndex < widget.subtasks.length - 1) {
       setState(() {
         currentIndex++;
-        remainingTime = widget.subtasks[currentIndex].time * 60;
+        _initializeTimerForCurrentSubtask();
       });
       _startTimer();
     } else {
@@ -410,11 +483,13 @@ class _TimerPlaylistScreenState extends State<TimerPlaylistScreen> {
       );
     }
     final currentSubtask = widget.subtasks[currentIndex];
-    final isNegative = remainingTime < 0;
-    final absTime = remainingTime.abs();
+    final currentRemainingTime = _calculateRemainingTime();
+    final isNegative = currentRemainingTime < 0;
+    final absTime = currentRemainingTime.abs();
     final minutes = absTime ~/ 60;
     final seconds = absTime % 60;
-    final timeString = '${isNegative ? '-' : ''}${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
+    final timeString =
+        '${isNegative ? '-' : ''}${minutes.toString().padLeft(2, '0')}:${seconds.toString().padLeft(2, '0')}';
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -439,21 +514,34 @@ class _TimerPlaylistScreenState extends State<TimerPlaylistScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 IconButton(
-                  icon: Icon(isPaused ? Icons.play_arrow : Icons.pause, color: Colors.white),
+                  icon: Icon(isPaused ? Icons.play_arrow : Icons.pause,
+                      color: Colors.white),
                   onPressed: () {
                     setState(() {
                       isPaused = !isPaused;
-                      if (!isPaused) _startTimer();
+                      if (!isPaused) {
+                        _startTime = DateTime.now();
+                        _startTimer();
+                      } else {
+                        if (_startTime != null) {
+                          final elapsedSinceStart =
+                              DateTime.now().difference(_startTime!).inSeconds;
+                          _elapsedSecondsBeforePause += elapsedSinceStart;
+                        }
+                        _startTime = null;
+                        _timer?.cancel();
+                        _applyScreenWakeLock();
+                      }
                     });
                   },
                 ),
                 IconButton(
                   icon: Icon(Icons.check, color: Colors.white),
-                  onPressed: _nextSubtask, // Mark as complete
+                  onPressed: _nextSubtask,
                 ),
                 IconButton(
                   icon: Icon(Icons.stop, color: Colors.white),
-                  onPressed: () => Navigator.pop(context), // Stop and return
+                  onPressed: () => Navigator.pop(context),
                 ),
               ],
             ),
@@ -477,13 +565,14 @@ class CongratsScreen extends StatelessWidget {
           children: [
             Icon(Icons.check_circle, color: Colors.green, size: 100),
             SizedBox(height: 20),
-            Text('All done!', style: TextStyle(color: Colors.white, fontSize: 24)),
+            Text('All done!',
+                style: TextStyle(color: Colors.white, fontSize: 24)),
             SizedBox(height: 20),
             ElevatedButton(
               onPressed: () => Navigator.pushAndRemoveUntil(
                 context,
                 MaterialPageRoute(builder: (context) => TaskCreationScreen()),
-                    (route) => false,
+                (route) => false,
               ),
               child: Text('Awesome!'),
             ),
@@ -504,6 +593,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final TextEditingController _apiKeyController = TextEditingController();
   final TextEditingController _contextController = TextEditingController();
+  bool _keepScreenOn = false;
 
   @override
   void initState() {
@@ -515,9 +605,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final prefs = await SharedPreferences.getInstance();
     _apiKeyController.text = prefs.getString('gemini_api_key') ?? '';
     _contextController.text = prefs.getString('user_context') ?? '';
+    setState(() {
+      _keepScreenOn = prefs.getBool('keep_screen_on') ?? false;
+    });
   }
 
-    Future<void> _launchGeminiAIStudioUrl() async {
+  Future<void> _launchGeminiAIStudioUrl() async {
     final Uri url = Uri.parse('https://aistudio.google.com/app/apikey');
     if (!await launchUrl(url)) {
       throw Exception('Could not launch $url');
@@ -528,6 +621,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('gemini_api_key', _apiKeyController.text);
     await prefs.setString('user_context', _contextController.text);
+    await prefs.setBool('keep_screen_on', _keepScreenOn);
     Navigator.pop(context);
   }
 
@@ -543,7 +637,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               controller: _apiKeyController,
               decoration: InputDecoration(labelText: 'Gemini API Key'),
             ),
-             SizedBox(height: 8),
+            SizedBox(height: 8),
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
@@ -561,8 +655,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
             SizedBox(height: 16),
             TextField(
               controller: _contextController,
-              decoration: InputDecoration(labelText: 'User Context (e.g., preferences, constraints)'),
+              decoration: InputDecoration(
+                  labelText: 'User Context (e.g., preferences, constraints)'),
               maxLines: 3,
+            ),
+            SizedBox(height: 16), // Add this SizedBox
+            SwitchListTile(
+              // Add this SwitchListTile
+              title: Text('Keep Screen On During Timer'),
+              value: _keepScreenOn,
+              onChanged: (value) {
+                setState(() {
+                  _keepScreenOn = value;
+                });
+              },
             ),
             SizedBox(height: 16),
             ElevatedButton(
